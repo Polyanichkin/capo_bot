@@ -1,0 +1,1 @@
+CREATE INDEX idx_bookings ON bookings(hall, time);
