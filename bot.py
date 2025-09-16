@@ -1,16 +1,15 @@
 import os
 import logging
 import asyncio
-import csv
-from io import StringIO
+from io import BytesIO
 from dotenv import load_dotenv
-from telegram.ext import ApplicationBuilder, CommandHandler, ConversationHandler, MessageHandler, filters, \
-    CallbackQueryHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
 from aiosqlite import connect as sqlite_connect
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, \
-    InputFile
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InputFile
 import datetime
 import re
+from openpyxl import Workbook
+from openpyxl.styles import Font
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -32,14 +31,12 @@ TIMESLOTS = {
     'Комендантский': ['17:00', '18:30']
 }
 
-
 # Функция для проверки номера телефона
 def is_valid_phone(phone):
     """Проверяет, является ли строка валидным номером телефона."""
     pattern = r'^\+?\d{10,15}$'
     cleaned_phone = re.sub(r'[^\d+]', '', phone)
     return bool(re.match(pattern, cleaned_phone))
-
 
 # Инициализация базы данных
 async def init_db():
@@ -58,7 +55,6 @@ async def init_db():
         """)
         await db.commit()
 
-
 # Сохранение записи в базу данных
 async def save_booking(user_id, context):
     first_name = context.user_data['first_name'] or "Не указано"
@@ -76,7 +72,6 @@ async def save_booking(user_id, context):
         await db.commit()
     logger.info(f"Сохранена запись: user_id={user_id}, hall={hall}, time={time}")
 
-
 # Начальное приветствие и предложение выбора зала
 async def start(update: Update, context):
     """Начало взаимодействия с ботом."""
@@ -91,7 +86,6 @@ async def start(update: Update, context):
     reply_markup = InlineKeyboardMarkup(buttons)
     await update.message.reply_text("Добро пожаловать в Capoeira Bot!\nВыберите зал:", reply_markup=reply_markup)
     return SELECT_HALL
-
 
 # Выбор зала
 async def select_hall(update: Update, context):
@@ -111,7 +105,6 @@ async def select_hall(update: Update, context):
     await query.edit_message_text(f"Вы выбрали зал '{selected_hall}'. Выберите время:", reply_markup=reply_markup)
     return SELECT_TIME
 
-
 # Выбор времени
 async def select_time(update: Update, context):
     """Выбор времени тренировки."""
@@ -119,8 +112,7 @@ async def select_time(update: Update, context):
     await query.answer()
     selected_time = query.data.split('_')[1]
     context.user_data['time'] = selected_time
-    logger.info(
-        f"Выбрано время: {selected_time}, зал: {context.user_data['hall']}, username: {context.user_data.get('username')}")
+    logger.info(f"Выбрано время: {selected_time}, зал: {context.user_data['hall']}, username: {context.user_data.get('username')}")
 
     # Проверяем, есть ли username у пользователя
     if not context.user_data.get('username'):
@@ -141,7 +133,6 @@ async def select_time(update: Update, context):
         await notify_admin(context)
         await save_booking(update.effective_user.id, context)
         return ConversationHandler.END
-
 
 # Ввод номера телефона
 async def input_phone(update: Update, context):
@@ -167,7 +158,6 @@ async def input_phone(update: Update, context):
     await save_booking(update.effective_user.id, context)
     return ConversationHandler.END
 
-
 # Оповещаем администратора о новой записи
 async def notify_admin(context):
     admin_chat_id = ADMIN_ID
@@ -191,7 +181,6 @@ async def notify_admin(context):
     except Exception as e:
         logger.error(f"Ошибка отправки уведомления администратору: {e}")
 
-
 # Отмена ввода телефона
 async def cancel(update: Update, context):
     """Отмена ввода телефона."""
@@ -200,7 +189,6 @@ async def cancel(update: Update, context):
         reply_markup=ReplyKeyboardRemove()
     )
     return ConversationHandler.END
-
 
 # Команда для просмотра записей (только для админа)
 async def list_bookings(update: Update, context):
@@ -221,7 +209,7 @@ async def list_bookings(update: Update, context):
     # Формируем удобный текстовый список
     message = "📋 Текущие записи на тренировки:\n\n"
     for index, row in enumerate(rows, 1):
-        username = f"@{row[3]}" if row[3] else "нет"
+        username = f"@{row[3]}" if row[3] else "нет username"
         phone = row[4] if row[4] else "не указан"
         created_at = row[7]
         if isinstance(created_at, str):
@@ -235,8 +223,8 @@ async def list_bookings(update: Update, context):
             f"⏰ Время: {row[6]}\n"
             f"👤 Пользователь: {row[2]} ({username})\n"
             f"📞 Телефон: {phone}\n"
-            f"📅 Дата и время обращения: {created_at}\n"
-            f"{'-' * 20}\n"
+            f"📅 Время обращения: {created_at}\n"
+            f"{'-'*20}\n"
         )
 
         # Проверяем лимит сообщения (Telegram: 4096 символов)
@@ -248,10 +236,20 @@ async def list_bookings(update: Update, context):
     if message.strip() != "📋 Продолжение записей:\n\n":
         await update.message.reply_text(message)
 
-    # Создаем CSV-файл для удобства анализа
-    output = StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['Зал', 'Время', 'Пользователь', 'Username', 'Телефон', 'Дата записи'])
+    # Создаем Excel-файл
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Bookings"
+    headers = ['Зал', 'Время', 'Пользователь', 'Username', 'Телефон', 'Время обращения']
+    ws.append(headers)
+
+    # Устанавливаем жирный шрифт для заголовков
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+
+    # Собираем данные для вычисления максимальной длины текста
+    max_lengths = [len(header) for header in headers]  # Начальные длины заголовков
+    data_rows = []
     for row in rows:
         username = f"@{row[3]}" if row[3] else "нет"
         phone = row[4] if row[4] else "не указан"
@@ -260,14 +258,31 @@ async def list_bookings(update: Update, context):
             created_at = datetime.datetime.fromisoformat(created_at).strftime("%Y-%m-%d %H:%M")
         else:
             created_at = created_at.strftime("%Y-%m-%d %H:%M")
-        writer.writerow([row[5], row[6], row[2], username, phone, created_at])
+        data_row = [row[5], row[6], row[2], username, phone, created_at]
+        data_rows.append(data_row)
+        # Обновляем максимальную длину для каждой колонки
+        for i, value in enumerate(data_row):
+            max_lengths[i] = max(max_lengths[i], len(str(value)))
 
+    # Записываем данные в таблицу
+    for data_row in data_rows:
+        ws.append(data_row)
+
+    # Устанавливаем ширину столбцов
+    for i, max_length in enumerate(max_lengths, 1):
+        # Примерно 1.2 символа на единицу ширины столбца, с минимальной шириной 10
+        ws.column_dimensions[chr(64 + i)].width = max(max_length * 1.2, 10)
+
+    # Сохраняем Excel-файл в память
+    output = BytesIO()
+    wb.save(output)
     output.seek(0)
-    await update.message.reply_document(
-        document=InputFile(output, filename='bookings.csv'),
-        caption="📄 Все записи в формате CSV"
-    )
 
+    # Отправляем Excel-файл
+    await update.message.reply_document(
+        document=InputFile(output, filename='bookings.xlsx'),
+        caption="📄 Все записи в формате Excel"
+    )
 
 # Обработчик ошибок
 async def error_handler(update: Update, context):
@@ -275,7 +290,6 @@ async def error_handler(update: Update, context):
     logger.error(f"Ошибка: {context.error}")
     if update and update.message:
         await update.message.reply_text("Произошла ошибка. Пожалуйста, попробуйте снова с помощью /start.")
-
 
 # Главная функция запуска приложения
 def main():
@@ -304,7 +318,6 @@ def main():
     application.add_handler(CommandHandler('bookings', list_bookings))  # Добавляем команду /bookings
     application.add_error_handler(error_handler)
     application.run_polling()
-
 
 if __name__ == '__main__':
     main()
