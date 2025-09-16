@@ -1,0 +1,19 @@
+# ToDo - Если вы планируете добавить фильтры (например, /bookings Заставская для показа записей только по залу), модифицируйте list_bookings: pythonasync
+
+def list_bookings(update: Update, context):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("Доступ запрещен.")
+        return
+
+    hall_filter = context.args[0] if context.args else None
+    query = "SELECT * FROM bookings"
+    params = []
+    if hall_filter:
+        query += " WHERE hall = ?"
+        params.append(hall_filter)
+    query += " ORDER BY created_at DESC"
+
+    async with sqlite_connect(DB_NAME) as db:
+        cursor = await db.execute(query, params)
+        rows = await cursor.fetchall()
+    # ... (остальная логика)
