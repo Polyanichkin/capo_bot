@@ -33,7 +33,6 @@ TIMESLOTS = {
 
 # Функция для проверки номера телефона
 def is_valid_phone(phone):
-    """Проверяет, является ли строка валидным номером телефона."""
     pattern = r'^\+?\d{10,15}$'
     cleaned_phone = re.sub(r'[^\d+]', '', phone)
     return bool(re.match(pattern, cleaned_phone))
@@ -72,9 +71,9 @@ async def save_booking(user_id, context):
         await db.commit()
     logger.info(f"Сохранена запись: user_id={user_id}, hall={hall}, time={time}")
 
-# Начальное приветствие и предложение выбора зала
+# === НОВОЕ ПРИВЕТСТВИЕ ДЛЯ /start ===
 async def start(update: Update, context):
-    """Начало взаимодействия с ботом."""
+    """Первое приветствие при /start."""
     first_name = update.effective_user.first_name
     username = update.effective_user.username
     context.user_data.update({
@@ -82,14 +81,51 @@ async def start(update: Update, context):
         'username': username
     })
 
+    welcome_text = (
+        f"Привет, <b>{first_name}</b>! 🎉\n\n"
+        "Добро пожаловать в <b>Capoeira Training Bot</b>!\n"
+        "Я помогу тебе записаться на тренировку в один из наших залов.\n\n"
+        "Выбери зал ниже и следуй инструкциям — запись займёт меньше минуты! 💪\n\n"
+        "Доступные залы:"
+    )
+
     buttons = [[InlineKeyboardButton(zal, callback_data=f'hall_{zal}')] for zal in HALLS]
     reply_markup = InlineKeyboardMarkup(buttons)
-    await update.message.reply_text("Добро пожаловать в Capoeira Bot!\nВыберите зал:", reply_markup=reply_markup)
+
+    await update.message.reply_text(
+        welcome_text,
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+    return SELECT_HALL
+
+# === НОВАЯ КОМАНДА /book ===
+async def book(update: Update, context):
+    """Команда /book — начать запись в зал."""
+    first_name = update.effective_user.first_name
+    username = update.effective_user.username
+    context.user_data.update({
+        'first_name': first_name,
+        'username': username
+    })
+
+    book_text = (
+        f"Отлично, <b>{first_name}</b>! Записываем тебя на тренировку! 🥋\n\n"
+        "Выбери зал, куда хочешь прийти:"
+    )
+
+    buttons = [[InlineKeyboardButton(zal, callback_data=f'hall_{zal}')] for zal in HALLS]
+    reply_markup = InlineKeyboardMarkup(buttons)
+
+    await update.message.reply_text(
+        book_text,
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
     return SELECT_HALL
 
 # Выбор зала
 async def select_hall(update: Update, context):
-    """Выбор зала для тренировок."""
     query = update.callback_query
     await query.answer()
     selected_hall = query.data.split('_')[1]
@@ -99,36 +135,35 @@ async def select_hall(update: Update, context):
         await query.edit_message_text(f"В зале {selected_hall} нет свободных мест.")
         return ConversationHandler.END
 
-    # Кнопки для выбора времени
     buttons = [[InlineKeyboardButton(timeslot, callback_data=f'time_{timeslot}')] for timeslot in timeslots]
     reply_markup = InlineKeyboardMarkup(buttons)
-    await query.edit_message_text(f"Вы выбрали зал '{selected_hall}'. Выберите время:", reply_markup=reply_markup)
+    await query.edit_message_text(f"Вы выбрали зал '<b>{selected_hall}</b>'. Выберите время:", reply_markup=reply_markup, parse_mode='HTML')
     return SELECT_TIME
 
 # Выбор времени
 async def select_time(update: Update, context):
-    """Выбор времени тренировки."""
     query = update.callback_query
     await query.answer()
     selected_time = query.data.split('_')[1]
     context.user_data['time'] = selected_time
     logger.info(f"Выбрано время: {selected_time}, зал: {context.user_data['hall']}, username: {context.user_data.get('username')}")
 
-    # Проверяем, есть ли username у пользователя
     if not context.user_data.get('username'):
-        logger.info("Переход в состояние INPUT_PHONE")
         await query.message.reply_text(
-            f"Вы выбрали время: {selected_time} в зале {context.user_data['hall']}.\n\n"
-            "У вас не указан username в Telegram. Пожалуйста, введите ваш номер телефона для связи:",
+            f"Вы выбрали время: <b>{selected_time}</b> в зале <b>{context.user_data['hall']}</b>.\n\n"
+            "У вас не указан username. Пожалуйста, введите номер телефона для связи:",
+            parse_mode='HTML',
             reply_markup=ReplyKeyboardRemove()
         )
-        await query.message.delete()  # Удаляем старое сообщение с inline-клавиатурой
+        await query.message.delete()
         return INPUT_PHONE
     else:
-        logger.info("Завершение записи для пользователя с username")
         await query.edit_message_text(
-            f"Выбранное время: {context.user_data['time']} в зале {context.user_data['hall']}. Ваша запись принята!",
-            reply_markup=None  # Явно убираем inline-клавиатуру
+            f"Готово! 🎯\n\n"
+            f"Ты записан на <b>{context.user_data['time']}</b>\n"
+            f"в зал <b>{context.user_data['hall']}</b>\n\n"
+            f"До встречи на тренировке! 🔥",
+            parse_mode='HTML'
         )
         await notify_admin(context)
         await save_booking(update.effective_user.id, context)
@@ -136,7 +171,6 @@ async def select_time(update: Update, context):
 
 # Ввод номера телефона
 async def input_phone(update: Update, context):
-    """Обработка ввода номера телефона."""
     phone = update.message.text.strip()
 
     if not is_valid_phone(phone):
@@ -147,10 +181,12 @@ async def input_phone(update: Update, context):
 
     context.user_data['phone'] = phone
     await update.message.reply_text(
-        f"Спасибо! Ваша запись принята:\n"
-        f"Зал: {context.user_data['hall']}\n"
-        f"Время: {context.user_data['time']}\n"
-        f"Телефон: {phone}",
+        f"Спасибо! Запись подтверждена:\n\n"
+        f"Зал: <b>{context.user_data['hall']}</b>\n"
+        f"Время: <b>{context.user_data['time']}</b>\n"
+        f"Телефон: <code>{phone}</code>\n\n"
+        f"Ждём тебя на тренировке! 🏃‍♂️",
+        parse_mode='HTML',
         reply_markup=ReplyKeyboardRemove()
     )
 
@@ -158,10 +194,9 @@ async def input_phone(update: Update, context):
     await save_booking(update.effective_user.id, context)
     return ConversationHandler.END
 
-# Оповещаем администратора о новой записи
+# Оповещение админа
 async def notify_admin(context):
     admin_chat_id = ADMIN_ID
-
     first_name = context.user_data['first_name'] or "Не указано"
     username = f"@{context.user_data['username']}" if context.user_data.get('username') else "нет username"
     hall = context.user_data['hall']
@@ -169,139 +204,118 @@ async def notify_admin(context):
     phone = context.user_data.get('phone', 'не указан')
 
     message = (
-        f"Новая запись!\n"
+        f"НОВАЯ ЗАПИСЬ!\n"
         f"Пользователь: {first_name} ({username})\n"
         f"Телефон: {phone}\n"
         f"Зал: {hall}\n"
-        f"Время: {time}"
+        f"Время: {time}\n"
+        f"Время: {datetime.datetime.now().strftime('%d.%m %H:%M')}"
     )
 
     try:
         await context.bot.send_message(chat_id=admin_chat_id, text=message)
     except Exception as e:
-        logger.error(f"Ошибка отправки уведомления администратору: {e}")
+        logger.error(f"Ошибка уведомления админа: {e}")
 
-# Отмена ввода телефона
+# Отмена
 async def cancel(update: Update, context):
-    """Отмена ввода телефона."""
     await update.message.reply_text(
-        "Запись отменена. Если хотите записаться снова, используйте /start",
+        "Запись отменена. Чтобы записаться — используй /book или /start",
         reply_markup=ReplyKeyboardRemove()
     )
     return ConversationHandler.END
 
-# Команда для просмотра записей (только для админа)
+# Команда /bookings — только Excel-файл (для админа)
 async def list_bookings(update: Update, context):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("Доступ запрещен. Эта команда только для администратора.")
+        await update.message.reply_text("Доступ запрещён. Команда только для администратора.")
         return
 
     async with sqlite_connect(DB_NAME) as db:
         cursor = await db.execute("SELECT * FROM bookings ORDER BY created_at DESC")
         rows = await cursor.fetchall()
 
-    logger.info(f"Извлечено записей из БД: {len(rows)}")  # Логируем количество записей
-
     if not rows:
-        await update.message.reply_text("Нет текущих записей.")
+        await update.message.reply_text("Нет записей на тренировки.")
         return
 
-    # Формируем удобный текстовый список
-    message = "📋 Текущие записи на тренировки:\n\n"
-    for index, row in enumerate(rows, 1):
-        username = f"@{row[3]}" if row[3] else "нет username"
-        phone = row[4] if row[4] else "не указан"
-        created_at = row[7]
-        if isinstance(created_at, str):
-            created_at = datetime.datetime.fromisoformat(created_at).strftime("%Y-%m-%d %H:%M")
-        else:
-            created_at = created_at.strftime("%Y-%m-%d %H:%M")
-
-        message += (
-            f"Запись #{index}:\n"
-            f"🏋 Зал: {row[5]}\n"
-            f"⏰ Время: {row[6]}\n"
-            f"👤 Пользователь: {row[2]} ({username})\n"
-            f"📞 Телефон: {phone}\n"
-            f"📅 Время обращения: {created_at}\n"
-            f"{'-'*20}\n"
-        )
-
-        # Проверяем лимит сообщения (Telegram: 4096 символов)
-        if len(message) > 3500:  # Оставляем запас
-            await update.message.reply_text(message)
-            message = "📋 Продолжение записей:\n\n"
-
-    # Отправляем текстовое сообщение
-    if message.strip() != "📋 Продолжение записей:\n\n":
-        await update.message.reply_text(message)
-
-    # Создаем Excel-файл
+    # Создаём Excel-файл
     wb = Workbook()
     ws = wb.active
-    ws.title = "Bookings"
-    headers = ['Зал', 'Время', 'Пользователь', 'Username', 'Телефон', 'Время обращения']
-    ws.append(headers)
+    ws.title = "Записи на тренировки"
 
-    # Устанавливаем жирный шрифт для заголовков
+    # Заголовки
+    headers = ['№', 'Зал', 'Время', 'Имя', 'Username', 'Телефон', 'Дата и время']
+    ws.append(headers)
     for cell in ws[1]:
         cell.font = Font(bold=True)
 
-    # Собираем данные для вычисления максимальной длины текста
-    max_lengths = [len(header) for header in headers]  # Начальные длины заголовков
-    data_rows = []
-    for row in rows:
-        username = f"@{row[3]}" if row[3] else "нет"
-        phone = row[4] if row[4] else "не указан"
+    # Данные
+    for idx, row in enumerate(rows, 1):
+        username = f"@{row[3]}" if row[3] else "—"
+        phone = row[4] if row[4] else "—"
         created_at = row[7]
-        if isinstance(created_at, str):
-            created_at = datetime.datetime.fromisoformat(created_at).strftime("%Y-%m-%d %H:%M")
+        if hasattr(created_at, 'strftime'):
+            created_at = created_at.strftime("%d.%m.%Y %H:%M")
         else:
-            created_at = created_at.strftime("%Y-%m-%d %H:%M")
-        data_row = [row[5], row[6], row[2], username, phone, created_at]
-        data_rows.append(data_row)
-        # Обновляем максимальную длину для каждой колонки
-        for i, value in enumerate(data_row):
-            max_lengths[i] = max(max_lengths[i], len(str(value)))
+            created_at = created_at
 
-    # Записываем данные в таблицу
-    for data_row in data_rows:
-        ws.append(data_row)
+        ws.append([
+            idx,
+            row[5],  # зал
+            row[6],  # время
+            row[2],  # имя
+            username,
+            phone,
+            created_at
+        ])
 
-    # Устанавливаем ширину столбцов
-    for i, max_length in enumerate(max_lengths, 1):
-        # Примерно 1.2 символа на единицу ширины столбца, с минимальной шириной 10
-        ws.column_dimensions[chr(64 + i)].width = max(max_length * 1.2, 10)
+    # Автоширина колонок
+    for col in ws.columns:
+        max_length = 0
+        column = col[0].column_letter
+        for cell in col:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        adjusted_width = min(max_length + 2, 50)
+        ws.column_dimensions[column].width = adjusted_width
 
-    # Сохраняем Excel-файл в память
+    # Сохраняем в память
     output = BytesIO()
     wb.save(output)
     output.seek(0)
 
-    # Отправляем Excel-файл
+    # Отправляем
     await update.message.reply_document(
-        document=InputFile(output, filename='bookings.xlsx'),
-        caption="📄 Все записи в формате Excel"
+        document=InputFile(output, filename=f"капо_записи_{datetime.datetime.now().strftime('%d-%m-%Y')}.xlsx"),
+        caption=(
+            "Текущие записи на тренировки\n"
+            f"Всего: {len(rows)} чел.\n"
+            "Обновлено: сейчас"
+        )
     )
 
 # Обработчик ошибок
 async def error_handler(update: Update, context):
-    """Обработка ошибок."""
     logger.error(f"Ошибка: {context.error}")
     if update and update.message:
-        await update.message.reply_text("Произошла ошибка. Пожалуйста, попробуйте снова с помощью /start.")
+        await update.message.reply_text("Ошибка. Попробуй /book или /start")
 
-# Главная функция запуска приложения
+# === ОСНОВНОЙ ЗАПУСК ===
 def main():
-    # Создаем приложение
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # Инициализируем базу данных синхронно в рамках цикла событий
     loop = asyncio.get_event_loop()
     loop.run_until_complete(init_db())
 
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
+        entry_points=[
+            CommandHandler('start', start),
+            CommandHandler('book', book)  # НОВАЯ КОМАНДА
+        ],
         states={
             SELECT_HALL: [CallbackQueryHandler(select_hall, pattern='^hall_')],
             SELECT_TIME: [CallbackQueryHandler(select_time, pattern='^time_')],
@@ -315,8 +329,10 @@ def main():
     )
 
     application.add_handler(conv_handler)
-    application.add_handler(CommandHandler('bookings', list_bookings))  # Добавляем команду /bookings
+    application.add_handler(CommandHandler('bookings', list_bookings))
     application.add_error_handler(error_handler)
+
+    print("Бот запущен! Используй /start или /book")
     application.run_polling()
 
 if __name__ == '__main__':
